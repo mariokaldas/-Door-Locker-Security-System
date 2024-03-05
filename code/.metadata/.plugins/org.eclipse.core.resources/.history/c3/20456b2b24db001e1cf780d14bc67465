@@ -1,0 +1,285 @@
+/*
+ * mcu1.c
+ *
+ *  Created on: Oct 28, 2023
+ *      Author: mario
+ */
+#include"HAL/LCD.h"
+#include"HAL/keypad.h"
+
+#include"HAL/MCAL/UART.h"
+#include"HAL/MCALtimer1.h"
+
+#include"util/delay.h"
+#include"HAL/MCAL/AVRIO.h"
+
+/***************************************************************************
+ *                           Global variables
+ *****************************************************************************/
+UART_configType g_UART_configurations = {EIGHT_BIT,NO_PARITY,ONE_STOP,9600};
+TIMER1_configType g_TIMER1_configurations;
+/*
+ * password1 >> first password during create password
+ * password2 >> second password during create password
+ * saved password >> The password actually saved in EEPROM
+ * entered password >> The password that user enter to check with the one in EEPROM
+ */
+uint8 g_password1[5],g_password2[5],g_savedPassword[5],g_enteredPassword[5];
+uint8 i; /* Counter for every for loop on any password */
+
+/* Every tick is 3 seconds */
+uint8 tick=0;
+
+/***************************************************************************
+ *                           Types declaration
+ *****************************************************************************/
+enum states{
+
+	CREATE_PASSWORD,MAIN_OPTIONS,OPEN_DOOR,WRONG_PASSWORD,ENTER_PASSWORD
+	,UNLOCKING_DOOR,ERROR_STATE
+}currentState;
+
+/***************************************************************************
+ *                          Functions prototype
+ *****************************************************************************/
+
+void APP_createPassword(uint8* pass1,uint8* pass2);
+void APP_sendPassword(uint8* pass);
+void APP_receivePassword(uint8* pass);
+void APP_plzEnterPassword(void);
+void APP_gateControl(void);
+void APP_errorControl(void);
+
+/***************************************************************************
+ *                               APPLICATION
+ *****************************************************************************/
+
+int main(void){
+
+	SREG_R.bit.I_bit = 1;
+
+	/* Variable containing  open door option or change password option */
+	uint8 option;
+
+	UART_init(&g_UART_configurations);
+	LCD_init();
+	LCD_moveCursor(0,0);
+
+	g_TIMER1_configurations.mode = COMPARE;
+	g_TIMER1_configurations.prescaler = FACTOR1024;
+	g_TIMER1_configurations.compare_value = 23500; /* 3 SECONDS */
+	g_TIMER1_configurations.initial_value = 0;
+
+	/* Go to first state */
+	currentState = CREATE_PASSWORD;
+
+	while(1){
+
+		switch(currentState){
+
+		case CREATE_PASSWORD:
+
+			APP_createPassword(g_password1,g_password2);
+
+			/* Send first password to control ECU */
+			APP_sendPassword(g_password1);
+
+			/* Send second password to control ECU */
+			APP_sendPassword(g_password2);
+
+			/* Receive the control ECU decision */
+			currentState = UART_receiveByte();
+
+			break;
+
+		case MAIN_OPTIONS:
+
+			LCD_clearScreen();
+			LCD_displayStringRowColumn("+ : open Door",0,0);
+			LCD_displayStringRowColumn("- : change pass",1,0);
+
+			/* Not allowing any value except the two options */
+			do
+			{
+				option = KEYPAD_getPressedKey();
+
+			}while(option != '+' && option != '-');
+
+			/* Send the option to control ECU to make decision */
+			UART_sendByte(option);
+			_delay_ms(400);
+
+			/* Go to enter password state */
+			currentState = ENTER_PASSWORD;
+
+			break;
+
+		case ENTER_PASSWORD:
+
+			if(option == '+')
+			{
+				/* Send entered password the wait for ECU decision */
+				APP_plzEnterPassword();
+				currentState = UART_receiveByte();
+			}
+			else if(option == '-')
+			{
+				/* Send entered password the wait for ECU decision */
+				APP_plzEnterPassword();
+				currentState = UART_receiveByte();
+			}
+
+			break;
+
+		case OPEN_DOOR:
+			LCD_clearScreen();
+			LCD_displayStringRowColumn("Door unlocking",0,0);
+
+			TIMER1_setCallBack(APP_gateControl);
+			TIMER1_init(&g_TIMER1_configurations);
+
+			currentState = UNLOCKING_DOOR;
+			break;
+
+			/* This state for waiting door processing without taking any action */
+		case UNLOCKING_DOOR:
+			break;
+
+		case WRONG_PASSWORD:
+
+			LCD_clearScreen();
+			LCD_displayStringRowColumn("ERROR",0,0);
+			TIMER1_setCallBack(APP_errorControl);
+			g_TIMER1_configurations.compare_value = 47000; /* 6 SECONDS */
+			TIMER1_init(&g_TIMER1_configurations);
+
+			currentState = ERROR_STATE;
+			break;
+
+		case ERROR_STATE:
+
+			/* System error >> no response for any human interface */
+
+			break;
+		}
+	}
+}
+
+/***************************************************************************
+ *                          Functions definition
+ *****************************************************************************/
+
+/*
+ * Function takes two passwords from user then send them to the control ECU
+ */
+void APP_createPassword(uint8* pass1,uint8*pass2){
+	/*
+	 *  Take password for first time and save it in global array
+	 * g_password1
+	 */
+	LCD_clearScreen();
+	LCD_displayStringRowColumn("plz enter pass:",0,0);
+	LCD_moveCursor(1,0);
+	for(i=0;i<5;i++){
+		pass1[i] = KEYPAD_getPressedKey();
+		LCD_displayCharacter('*');
+		_delay_ms(500);
+	}
+	/* Stuck till user press enter key ( = ) */
+	while(KEYPAD_getPressedKey() != '=');
+	_delay_ms(500);
+
+	/* Take password for second time and save it in global array
+	 * g_password2
+	 *  */
+	LCD_displayStringRowColumn("plz re-enter the",0,0);
+	LCD_displayStringRowColumn("same pass:",1,0);
+	for(i=0;i<5;i++){
+		pass2[i] = KEYPAD_getPressedKey();
+		LCD_displayCharacter('*');
+		_delay_ms(500);
+	}
+	/* Stuck till user press enter key ( = ) */
+	while(KEYPAD_getPressedKey() != '=');
+	_delay_ms(500);
+}
+
+
+void APP_sendPassword(uint8* pass){
+
+	/*
+	 * Send the password
+	 */
+	for(i=0;i<5;i++){
+		UART_sendByte(pass[i]);
+	}
+}
+
+
+void APP_receivePassword(uint8* pass){
+
+	/*
+	 * Receive password
+	 */
+	for(i=0;i<5;i++){
+		pass[i] = UART_receiveByte();
+	}
+}
+
+/*
+ * Function takes password from user and save it in g_enteredPassword
+ * then send it to the control ECU
+ */
+void APP_plzEnterPassword(void){
+
+	LCD_clearScreen();
+	LCD_displayStringRowColumn("plz enter pass:",0,0);
+	LCD_moveCursor(1,0);
+	for(i=0;i<5;i++){
+		g_enteredPassword[i] = KEYPAD_getPressedKey();
+		LCD_displayCharacter('*');
+		_delay_ms(500);
+	}
+	/* Stuck till user press enter key ( = ) */
+	while(KEYPAD_getPressedKey() != '=');
+	_delay_ms(500);
+
+	APP_sendPassword(g_enteredPassword);
+}
+
+
+void APP_gateControl(void){
+
+	tick++; /* Every tick means 3 seconds has passed */
+
+	if(tick == 5) /* 15 seconds passed */
+	{
+		LCD_clearScreen();
+		LCD_displayStringRowColumn("Door is unlocked",0,0);
+	}
+	else if(tick == 6) /* 18 seconds passed */
+	{
+		LCD_clearScreen();
+		LCD_displayStringRowColumn("Door is locking",0,0);
+	}
+	else if(tick == 11) /* After another 15 seconds */
+	{
+		currentState = MAIN_OPTIONS;
+		tick = 0;
+		TIMER1_deInit();
+	}
+}
+
+
+void APP_errorControl(void){
+
+	tick++; /* Every tick means 6 seconds has passed */
+
+	if(tick == 10) /* 60 seconds passed */
+	{
+		TIMER1_deInit();
+		g_TIMER1_configurations.compare_value = 23500;
+		tick = 0;
+		currentState = MAIN_OPTIONS;
+	}
+}

@@ -1,0 +1,9 @@
+APP/HAL/MCAL/UART.o APP/HAL/MCAL/UART.o: ../APP/HAL/MCAL/UART.c \
+  ../APP/HAL/MCAL/UART.h ../APP/HAL/MCAL/std_types.h \
+  ../APP/HAL/MCAL/AVRIO.h
+
+../APP/HAL/MCAL/UART.h:
+
+../APP/HAL/MCAL/std_types.h:
+
+../APP/HAL/MCAL/AVRIO.h:

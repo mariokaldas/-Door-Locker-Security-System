@@ -1,0 +1,9 @@
+APP/HAL/MCAL/PWM.o APP/HAL/MCAL/PWM.o: ../APP/HAL/MCAL/PWM.c \
+  ../APP/HAL/MCAL/PWM.h ../APP/HAL/MCAL/std_types.h \
+  ../APP/HAL/MCAL/AVRIO.h
+
+../APP/HAL/MCAL/PWM.h:
+
+../APP/HAL/MCAL/std_types.h:
+
+../APP/HAL/MCAL/AVRIO.h:
